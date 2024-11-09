@@ -1,30 +1,25 @@
+from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework import viewsets
+from rest_framework import viewsets, status
 from rest_framework.permissions import IsAuthenticated
-from .models import Catalog, Test, Question, Choice
-from .serializers import CatalogCreateUpdateSerializer, CatalogListSerializer, TestListSerializer, \
+from .models import Catalog, Test, Question, Choice, TestResults
+from .serializers import CatalogSerializer, TestListSerializer, \
     TestCreateUpdateSerializer, QuestionSerializer, \
-    ChoiceSerializer
-from .permissions import IsUser, IsTeacherOrReadOnly, IsSuperUserOrReadOnly, IsSuperUserOrTeacherOrReadOnly
+    ChoiceSerializer, TestResultsSerializer
+from .permissions import IsUser, IsSuperUserOrReadOnly, IsSuperUserOrTeacherOrReadOnly
 
 
 class CatalogViewSet(viewsets.ModelViewSet):
-    queryset = Catalog.objects.all()
+    queryset = Catalog.objects.all().prefetch_related('tests')
+    serializer_class = CatalogSerializer
     permission_classes = [IsAuthenticated, IsSuperUserOrReadOnly]
-
-    def get_serializer_class(self):
-        if self.action == 'list':
-            return CatalogListSerializer
-        elif self.action == 'create' or self.action == 'update' or self.action == 'partial_update':
-            return CatalogCreateUpdateSerializer
-        return CatalogListSerializer
 
 
 class TestViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, IsSuperUserOrTeacherOrReadOnly]
 
     def get_queryset(self):
-        queryset = Test.objects.all()
+        queryset = Test.objects.all().select_related('catalog').prefetch_related('questions')
 
         catalog_id = self.request.query_params.get('catalog_id', None)
         if catalog_id:
@@ -43,18 +38,29 @@ class TestViewSet(viewsets.ModelViewSet):
 class QuestionViewSet(viewsets.ModelViewSet):
     queryset = Question.objects.all()
     serializer_class = QuestionSerializer
-    permission_classes = [IsAuthenticated, IsSuperUserOrReadOnly, IsUser, IsTeacherOrReadOnly]
+    permission_classes = [IsAuthenticated, IsSuperUserOrTeacherOrReadOnly]
+
+    def get_queryset(self):
+        queryset = Question.objects.all().select_related('test').prefetch_related('choices')
+
+        test_id = self.request.query_params.get('test_id', None)
+        if test_id:
+            queryset = queryset.filter(test_id=test_id)
+
+        return queryset
 
 
 class ChoiceViewSet(viewsets.ModelViewSet):
-    queryset = Choice.objects.all()
+    queryset = Choice.objects.all().select_related('question')
     serializer_class = ChoiceSerializer
-    permission_classes = [IsAuthenticated, IsSuperUserOrReadOnly, IsUser, IsTeacherOrReadOnly]
+    permission_classes = [IsAuthenticated, IsSuperUserOrTeacherOrReadOnly]
 
 
 class TestResultView(APIView):
+    permission_classes = [IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
+
         test_id = request.data.get("test_id")
         answers = request.data.get("answers")
 
@@ -68,17 +74,24 @@ class TestResultView(APIView):
         for question_id, answer_id in answers.items():
             try:
                 question = Question.objects.get(id=question_id)
-                answer = Answer.objects.get(id=answer_id, question=question)
+                answer = Choice.objects.get(id=answer_id, question=question)
 
                 if answer.is_correct:
                     correct_answers_count += 1
-            except (Question.DoesNotExist, Answer.DoesNotExist):
+            except (Question.DoesNotExist, Choice.DoesNotExist):
                 continue
 
         result_percentage = (correct_answers_count / total_questions) * 100 if total_questions > 0 else 0
-
+        TestResults.objects.create(user=request.user, test=test, correct_answers=correct_answers_count,
+                                   total_questions=total_questions, result_percentage=result_percentage)
         return Response({
             "correct_answers": correct_answers_count,
             "total_questions": total_questions,
             "result_percentage": result_percentage,
         })
+
+
+class ResultsView(viewsets.ReadOnlyModelViewSet):
+    queryset = TestResults.objects.all().prefetch_related('test', 'user')
+    serializer_class = TestResultsSerializer
+    permission_classes = [IsAuthenticated, IsSuperUserOrTeacherOrReadOnly]

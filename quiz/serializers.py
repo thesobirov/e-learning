@@ -1,19 +1,32 @@
 from rest_framework import serializers
-from .models import Catalog, Test, Question, Choice
+from .models import Catalog, Test, Question, Choice, TestResults
 
 
 class ChoiceSerializer(serializers.ModelSerializer):
+    question = serializers.PrimaryKeyRelatedField(queryset=Question.objects.all(), required=False)
+
     class Meta:
         model = Choice
-        fields = ['id', 'text', 'is_correct']
+        fields = ['id', 'text', 'is_correct', 'question']
 
 
 class QuestionSerializer(serializers.ModelSerializer):
-    choices = ChoiceSerializer(many=True)
+    choices = ChoiceSerializer(many=True, required=False)
+    test = serializers.PrimaryKeyRelatedField(queryset=Test.objects.all(), required=False)
 
     class Meta:
         model = Question
-        fields = ['id', 'text', 'choices']
+        fields = ['id', 'text', 'test', 'choices']
+
+    def create(self, validated_data):
+        print(validated_data)
+        choices_data = validated_data.pop('choices')
+        question = Question.objects.create(**validated_data)
+
+        for choice_data in choices_data:
+            Choice.objects.create(question=question, **choice_data)
+
+        return question
 
 
 class TestCreateUpdateSerializer(serializers.ModelSerializer):
@@ -40,13 +53,16 @@ class TestListSerializer(serializers.ModelSerializer):
         fields = ['id', 'title']
 
 
-class CatalogCreateUpdateSerializer(serializers.ModelSerializer):
+class CatalogSerializer(serializers.ModelSerializer):
     class Meta:
         model = Catalog
         fields = ['id', 'name']
 
 
-class CatalogListSerializer(serializers.ModelSerializer):
+class TestResultsSerializer(serializers.ModelSerializer):
+    test_title = serializers.CharField(source='test.title')
+    username = serializers.CharField(source='user.username')
+
     class Meta:
-        model = Catalog
-        fields = ['id', 'name']
+        model = TestResults
+        fields = ['id', 'test_title', 'username', 'correct_answers', 'total_questions', 'result_percentage']
