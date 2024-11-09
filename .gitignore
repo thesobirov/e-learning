@@ -1,0 +1,12 @@
+venv
+.idea
+**/__pycache__/
+media
+**/migrations/*
+!**/migrations/__init__.py
+frontend/build
+transfer
+transfer/
+Lib
+Scripts
+pyvenv.cfg
